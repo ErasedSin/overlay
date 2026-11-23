@@ -29,7 +29,12 @@
     transform-origin: top left;
   }
   #ps4 img, #ps4 .poco, #ps4 .grupo { position: absolute; }
-  #ps4 .luz { display: none; filter: drop-shadow(0 0 8px rgba(227, 38, 47, .9)); }
+  #ps4 .grupo { transition: transform 60ms linear; }
+  #ps4 .luz {
+    display: none;
+    filter: drop-shadow(0 0 8px rgba(227, 38, 47, .9));
+    transition: clip-path 60ms linear;
+  }
   #ps4 .luz.on { display: block; }
   #ps4 .luz.face { filter: drop-shadow(0 0 10px rgba(255, 255, 255, .8)); }
   #ps4 .poco { border-radius: 50%; background: rgb(15, 15, 15); }
