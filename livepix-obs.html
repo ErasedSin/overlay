@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>LivePix OBS</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
+  /* Each widget keeps its own size (w x h) and is shrunk with --s, so nothing
+     inside gets cut. To move one, change left/top; to resize, change --s. */
+  .w {
+    position: absolute;
+    border: 0;
+    background: transparent;
+    transform: scale(var(--s));
+    transform-origin: top left;
+  }
+  #meta     { --s: 0.75; width: 800px; height: 120px; left: 660px;  top: 12px;  }
+  #alertas  { --s: 0.9;  width: 800px; height: 480px; left: 600px;  top: 324px; }
+  #qrcode   { --s: 0.6;  width: 260px; height: 300px; left: 1748px; top: 884px; }
+  #video    { --s: 0.6;  width: 640px; height: 360px; left: 1520px; top: 16px;  }
+  #musica   { --s: 0.7;  width: 520px; height: 200px; left: 16px;   top: 16px;  }
+  #doacoes  { --s: 0.75; width: 380px; height: 260px; left: 16px;   top: 869px; }
+
+  body.guia { background: #1b1f27; }
+  .caixa { display: none; }
+  body.guia .caixa {
+    display: block;
+    position: absolute;
+    outline: 2px dashed #e33;
+    pointer-events: none;
+  }
+  body.guia .caixa span {
+    position: absolute;
+    left: 0;
+    top: 0;
+    font: bold 16px/1 Segoe UI, Arial, sans-serif;
+    color: #fff;
+    background: #e33;
+    padding: 3px 6px;
+  }
+</style>
+</head>
+<body>
+<iframe class="w" id="meta" src="https://widget.livepix.gg/embed/7fd46a15-25e2-4003-acdf-d7d692af3e9a"></iframe>
+<iframe class="w" id="alertas" src="https://widget.livepix.gg/embed/73b00cf8-0284-4ab3-bdf0-c92058a8f88c" allow="autoplay"></iframe>
+<iframe class="w" id="qrcode" src="https://widget.livepix.gg/embed/bf3d7e48-1982-4ea9-81a9-5d05381802e0"></iframe>
+<iframe class="w" id="video" src="https://widget.livepix.gg/embed/d4d64bbd-be49-4fb1-99be-6c715544e4bf" allow="autoplay; fullscreen"></iframe>
+<iframe class="w" id="musica" src="https://widget.livepix.gg/embed/440588fa-b7f8-4cd1-ba0a-3ffd2713438b" allow="autoplay"></iframe>
+<iframe class="w" id="doacoes" src="https://widget.livepix.gg/embed/dd468e50-6578-4737-a6b1-85394481c390"></iframe>
+<script>
+  // livepix-obs.html#guia shows each widget's area with its name.
+  if (location.hash === '#guia') {
+    document.body.classList.add('guia');
+    var nomes = { meta: 'META', alertas: 'ALERTAS', qrcode: 'QR CODE', video: 'VÍDEO',
+                  musica: 'MÚSICA', doacoes: 'ÚLTIMAS DOAÇÕES' };
+    document.querySelectorAll('.w').forEach(function (f) {
+      var r = f.getBoundingClientRect();
+      var c = document.createElement('div');
+      c.className = 'caixa';
+      c.style.cssText = 'left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px';
+      var s = document.createElement('span');
+      s.textContent = nomes[f.id];
+      c.appendChild(s);
+      document.body.appendChild(c);
+    });
+  }
+</script>
+</body>
+</html>

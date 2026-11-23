@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Controles</title>
+<style>
+  html, body {
+    margin: 0;
+    background: transparent;
+    overflow: hidden;
+  }
+  body.verde { background: #00ff00; }
+  #palco {
+    display: inline-flex;
+    gap: 30px;
+    align-items: flex-end;
+    padding: 12px;
+    transition: opacity .5s;
+  }
+  #palco.parado { opacity: .45; }
+  #controle { position: relative; transition: opacity .5s; }
+  #controle.ausente { opacity: .3; }
+  #ps4 {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 989px;
+    height: 639px;
+    transform-origin: top left;
+  }
+  #ps4 img, #ps4 .poco, #ps4 .grupo { position: absolute; }
+  #ps4 .luz { display: none; filter: drop-shadow(0 0 8px rgba(227, 38, 47, .9)); }
+  #ps4 .luz.on { display: block; }
+  #ps4 .luz.face { filter: drop-shadow(0 0 10px rgba(255, 255, 255, .8)); }
+  #ps4 .poco { border-radius: 50%; background: rgb(15, 15, 15); }
+  #teclado { display: block; }
+  #info {
+    display: none;
+    position: fixed;
+    left: 8px;
+    bottom: 8px;
+    font: 13px/1.4 "Segoe UI", Arial, sans-serif;
+    color: #fff;
+    background: rgba(0, 0, 0, .7);
+    padding: 6px 10px;
+    border-radius: 6px;
+    white-space: pre;
+  }
+  body.info #info { display: block; }
+</style>
+</head>
+<body>
+<div id="palco" class="parado">
+  <div id="controle" class="ausente"><div id="ps4"></div></div>
+  <canvas id="teclado" width="1" height="1"></canvas>
+</div>
+<div id="info"></div>
+<script>
+(function () {
+  'use strict';
+
+  // controles.html?teclado=joao7yt/fps&estilo=normal-black_normal-white#k=CODE
+  // teclado: a NohBoard layout from keyboards/ (category/name), estilo: a .style
+  // from that layout's folder or keyboards/global. Other options: ?so=controle or
+  // ?so=teclado, ?controle=0.62 (controller size), ?escala=1 (keyboard size),
+  // ?fundo (keeps the style's background color), ?verde, ?info, ?demo.
+  var params = new URLSearchParams(location.search);
+  var hash = new URLSearchParams(location.hash.slice(1));
+  var codigo = (hash.get('k') || params.get('k') || '').trim();
+  var layoutName = params.get('teclado') || 'joao7yt/fps';
+  var styleName = params.get('estilo') || '';
+  if (params.has('verde')) document.body.classList.add('verde');
+  if (params.has('info')) document.body.classList.add('info');
+  var mostrarControle = params.get('so') !== 'teclado';
+  var mostrarTeclado = params.get('so') !== 'controle';
+
+  var BROKERS = [
+    'wss://test.mosquitto.org:8081/mqtt',
+    'wss://broker.hivemq.com:8884/mqtt',
+    'wss://broker.emqx.io:8084/mqtt'
+  ];
+
+  var estado = { p: 0, b: 0, lt: 0, rt: 0, lx: 0, ly: 0, rx: 0, ry: 0, k: [], m: 0, w: 0, sh: 0, cp: 0 };
+  var NEUTRO = estado;
+
+  // Controller: highlight images cut from ps4/controle.png, at their spot in
+  // the 989x639 picture: [file, x, y, w, h, XInput button bit].
+  var PECAS = [
+    ['du', 221, 200, 38, 41, 0x1], ['dd', 221, 287, 37, 40, 0x2],
+    ['dl', 177, 245, 41, 38, 0x4], ['dr', 263, 245, 41, 38, 0x8],
+    ['options', 638, 163, 27, 45, 0x10], ['share', 313, 163, 27, 45, 0x20],
+    ['l1', 194, 120, 100, 17, 0x100], ['r1', 684, 120, 100, 17, 0x200],
+    ['ps', 468, 362, 41, 41, 0x400],
+    ['xis', 712, 296, 53, 53, 0x1000], ['bola', 768, 238, 53, 53, 0x2000],
+    ['quadrado', 654, 238, 53, 53, 0x4000], ['triangulo', 712, 180, 53, 53, 0x8000],
+    ['l2', 196, 19, 98, 85, 0], ['r2', 684, 19, 98, 85, 0]
+  ];
+  var ANALOGICOS = [['l3', 360, 374, 0x40], ['r3', 616, 374, 0x80]];
+  var luzes = {};
+  var grupos = {};
+  var escalaControle = parseFloat(params.get('controle')) || 0.62;
+
+  function img(src, x, y, w, h, classe) {
+    var el = document.createElement('img');
+    el.src = 'ps4/' + src + '.png';
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    if (classe) el.className = classe;
+    return el;
+  }
+
+  function montarControle() {
+    var caixa = document.getElementById('controle');
+    if (!mostrarControle) {
+      caixa.style.display = 'none';
+      return;
+    }
+    var ps4 = document.getElementById('ps4');
+    caixa.style.width = Math.round(989 * escalaControle) + 'px';
+    caixa.style.height = Math.round(639 * escalaControle) + 'px';
+    ps4.style.transform = 'scale(' + escalaControle + ')';
+    ps4.appendChild(img('controle', 0, 0, 989, 639));
+    ANALOGICOS.forEach(function (a) {
+      var poco = document.createElement('div');
+      poco.className = 'poco';
+      poco.style.left = a[1] - 31 + 'px';
+      poco.style.top = a[2] - 31 + 'px';
+      poco.style.width = poco.style.height = '62px';
+      ps4.appendChild(poco);
+      var g = document.createElement('div');
+      g.className = 'grupo';
+      g.style.left = g.style.top = '0';
+      g.appendChild(img(a[0] + '-cap', a[1] - 30, a[2] - 30, 61, 61));
+      var luz = img(a[0], a[1] - 27, a[2] - 27, 55, 55, 'luz');
+      g.appendChild(luz);
+      ps4.appendChild(g);
+      luzes[a[0]] = luz;
+      grupos[a[0]] = g;
+    });
+    PECAS.forEach(function (p) {
+      var face = ['xis', 'bola', 'quadrado', 'triangulo'].indexOf(p[0]) >= 0;
+      var luz = img(p[0], p[1], p[2], p[3], p[4], face ? 'luz face' : 'luz');
+      ps4.appendChild(luz);
+      luzes[p[0]] = luz;
+    });
+  }
+
+  function desenharControle(st) {
+    if (!mostrarControle) return;
+    var b = st.b | 0;
+    PECAS.forEach(function (p) {
+      if (p[5]) luzes[p[0]].classList.toggle('on', (b & p[5]) !== 0);
+    });
+    [['l2', st.lt], ['r2', st.rt]].forEach(function (g) {
+      var v = Math.max(0, Math.min(100, g[1] || 0));
+      luzes[g[0]].classList.toggle('on', v > 2);
+      luzes[g[0]].style.clipPath = 'inset(' + (100 - v) + '% 0 0 0)';
+    });
+    ANALOGICOS.forEach(function (a) {
+      var x = a[0] === 'l3' ? st.lx : st.rx;
+      var y = a[0] === 'l3' ? st.ly : st.ry;
+      grupos[a[0]].style.transform = 'translate(' + ((x || 0) / 100 * 16) + 'px,' + (-(y || 0) / 100 * 16) + 'px)';
+      luzes[a[0]].classList.toggle('on', (b & a[3]) !== 0);
+    });
+    document.getElementById('controle').classList.toggle('ausente', !st.p);
+  }
+
+  // Keyboard: draws a NohBoard layout (keyboard.json + .style) on a canvas.
+  var canvas = document.getElementById('teclado');
+  var ctx = canvas.getContext('2d');
+  var layout = null;
+  var estilo = null;
+  var imagens = {};
+  var escalaTeclado = parseFloat(params.get('escala')) || 1;
+  var pastaCategoria = 'keyboards/' + layoutName.split('/')[0] + '/';
+
+  function lerJson(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(url);
+      return r.text();
+    }).then(function (t) {
+      return JSON.parse(t.replace(/^﻿/, '').replace(/,\s*([\]}])/g, '$1'));
+    });
+  }
+
+  function carregarImagem(nome) {
+    if (!nome || imagens[nome]) return;
+    var im = new Image();
+    im.onload = function () { desenharTeclado(estado); };
+    im.src = pastaCategoria + 'images/' + nome;
+    imagens[nome] = im;
+  }
+
+  function cor(c, padrao) {
+    if (!c) return padrao;
+    return 'rgb(' + c.Red + ',' + c.Green + ',' + c.Blue + ')';
+  }
+
+  function fonte(f) {
+    if (!f) return 'bold 14px "Segoe UI", Arial, sans-serif';
+    var px = (f.Size || 10) * 96 / 72;
+    var s = f.Style || 0;
+    return ((s & 2) ? 'italic ' : '') + ((s & 1) ? 'bold ' : '') + px.toFixed(1) + 'px "' + f.FontFamily + '", "Segoe UI", Arial, sans-serif';
+  }
+
+  function carregarTeclado() {
+    if (!mostrarTeclado) {
+      canvas.style.display = 'none';
+      return Promise.resolve();
+    }
+    var pasta = 'keyboards/' + layoutName + '/';
+    var pedidos = [lerJson(pasta + 'keyboard.json')];
+    if (styleName) {
+      pedidos.push(lerJson(pasta + styleName + '.style').catch(function () {
+        return lerJson('keyboards/global/' + styleName + '.style');
+      }));
+    } else {
+      pedidos.push(lerJson('keyboards/global/default.style'));
+    }
+    return Promise.all(pedidos).then(function (r) {
+      layout = r[0];
+      estilo = r[1] || {};
+      estilo.porElemento = {};
+      (estilo.ElementStyles || []).forEach(function (e) { estilo.porElemento[e.Key] = e.Value; });
+      [estilo.DefaultKeyStyle].concat((estilo.ElementStyles || []).map(function (e) { return e.Value; }))
+        .forEach(function (k) {
+          if (!k) return;
+          if (k.Loose) carregarImagem(k.Loose.BackgroundImageFileName);
+          if (k.Pressed) carregarImagem(k.Pressed.BackgroundImageFileName);
+        });
+      carregarImagem(estilo.BackgroundImageFileName);
+      canvas.width = Math.round(layout.Width * escalaTeclado);
+      canvas.height = Math.round(layout.Height * escalaTeclado);
+      desenharTeclado(estado);
+    }).catch(function (e) {
+      erroInfo = 'Não achei o modelo de teclado "' + layoutName + '" (' + e.message + ')';
+      document.body.classList.add('info');
+    });
+  }
+
+  function apertado(el, st) {
+    var codes = el.KeyCodes || [];
+    if (el.__type === 'KeyboardKey') {
+      for (var i = 0; i < codes.length; i++) {
+        if (st.k.indexOf(codes[i]) >= 0) return true;
+      }
+      return false;
+    }
+    if (el.__type === 'MouseKey') return codes.some(function (c) { return (st.m >> c) & 1; });
+    if (el.__type === 'MouseScroll') return codes.some(function (c) { return (st.w >> c) & 1; });
+    return false;
+  }
+
+  function desenharTeclado(st) {
+    if (!layout) return;
+    ctx.setTransform(escalaTeclado, 0, 0, escalaTeclado, 0, 0);
+    ctx.clearRect(0, 0, layout.Width, layout.Height);
+    if (params.has('fundo')) {
+      ctx.fillStyle = cor(estilo.BackgroundColor, 'transparent');
+      ctx.fillRect(0, 0, layout.Width, layout.Height);
+    }
+    var fundo = imagens[estilo.BackgroundImageFileName];
+    if (fundo && fundo.complete && fundo.naturalWidth) ctx.drawImage(fundo, 0, 0, layout.Width, layout.Height);
+
+    layout.Elements.forEach(function (el) {
+      if (el.__type === 'MouseSpeedIndicator') {
+        var ms = (estilo.porElemento[el.Id]) || estilo.DefaultMouseSpeedIndicatorStyle || {};
+        ctx.lineWidth = ms.OutlineWidth || 1;
+        ctx.strokeStyle = cor(ms.OuterColor, '#fff');
+        ctx.beginPath();
+        ctx.arc(el.Location.X, el.Location.Y, el.Radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = cor(ms.InnerColor, '#888');
+        ctx.beginPath();
+        ctx.arc(el.Location.X, el.Location.Y, Math.max(2, el.Radius / 6), 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      var on = apertado(el, st);
+      var proprio = estilo.porElemento[el.Id];
+      var padrao = estilo.DefaultKeyStyle || {};
+      var s = (proprio && (on ? proprio.Pressed : proprio.Loose)) || (on ? padrao.Pressed : padrao.Loose) || {};
+      var pts = el.Boundaries || [];
+      if (!pts.length) return;
+      var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      ctx.beginPath();
+      pts.forEach(function (p, i) {
+        if (i === 0) ctx.moveTo(p.X, p.Y);
+        else ctx.lineTo(p.X, p.Y);
+        minX = Math.min(minX, p.X); minY = Math.min(minY, p.Y);
+        maxX = Math.max(maxX, p.X); maxY = Math.max(maxY, p.Y);
+      });
+      ctx.closePath();
+      var im = imagens[s.BackgroundImageFileName];
+      if (im && im.complete && im.naturalWidth) {
+        ctx.save();
+        ctx.clip();
+        ctx.drawImage(im, minX, minY, maxX - minX, maxY - minY);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = cor(s.Background, on ? '#fff' : '#646464');
+        ctx.fill();
+      }
+      if (s.ShowOutline) {
+        ctx.lineWidth = s.OutlineWidth || 1;
+        ctx.strokeStyle = cor(s.Outline, '#0f0');
+        ctx.stroke();
+      }
+      var texto = el.Text || '';
+      if (el.__type === 'KeyboardKey') {
+        var maiuscula = st.sh ? !(el.ChangeOnCaps && st.cp) : (el.ChangeOnCaps && st.cp);
+        if (maiuscula && el.ShiftText) texto = el.ShiftText;
+      }
+      if (!texto) return;
+      ctx.font = fonte(s.Font);
+      ctx.fillStyle = cor(s.Text, '#000');
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var pos = el.TextPosition || { X: (minX + maxX) / 2, Y: (minY + maxY) / 2 };
+      var linhas = texto.split('\n');
+      var altura = (s.Font ? s.Font.Size * 96 / 72 : 14) * 1.15;
+      linhas.forEach(function (l, i) {
+        ctx.fillText(l, pos.X, pos.Y + (i - (linhas.length - 1) / 2) * altura);
+      });
+    });
+  }
+
+  function aplicar(st) {
+    estado = st;
+    desenharControle(st);
+    desenharTeclado(st);
+  }
+
+  var palco = document.getElementById('palco');
+  var ultimoSeq = -1;
+  var ultimoTempo = 0;
+  var recebidos = 0;
+  function chegou(st) {
+    if (!st || typeof st.s !== 'number' || st.s <= ultimoSeq) return;
+    ultimoSeq = st.s;
+    ultimoTempo = performance.now();
+    recebidos++;
+    if (st.off) {
+      aplicar(NEUTRO);
+      palco.classList.add('parado');
+      return;
+    }
+    st.k = st.k || [];
+    palco.classList.remove('parado');
+    aplicar(st);
+  }
+  setInterval(function () {
+    if (performance.now() - ultimoTempo > 3000 && !palco.classList.contains('parado')) {
+      aplicar(NEUTRO);
+      palco.classList.add('parado');
+    }
+    mostrarInfo();
+  }, 500);
+
+  var conexoes = [];
+  var info = document.getElementById('info');
+  var erroInfo = '';
+  function mostrarInfo() {
+    if (!document.body.classList.contains('info')) return;
+    var linhas = conexoes.map(function (c) {
+      return (c.ok ? 'ok      ' : 'tentando') + '  ' + c.url.replace('wss://', '').replace(/:.*/, '');
+    });
+    var idade = ultimoTempo ? ((performance.now() - ultimoTempo) / 1000).toFixed(1) + ' s' : 'nunca';
+    info.textContent = (erroInfo ? erroInfo + '\n' : '') + linhas.join('\n') +
+      '\nmensagens: ' + recebidos + ' (última há ' + idade + ')';
+  }
+
+  montarControle();
+  aplicar(NEUTRO);
+  carregarTeclado().then(function () {
+    if (params.has('demo')) iniciarDemo();
+  });
+
+  function iniciarDemo() {
+    var codigos = [];
+    if (layout) {
+      layout.Elements.forEach(function (el) {
+        if (el.__type === 'KeyboardKey') codigos = codigos.concat(el.KeyCodes || []);
+      });
+    }
+    var t0 = performance.now();
+    var botoes = [0x1000, 0x2000, 0x4000, 0x8000, 0x100, 0x200, 0x1, 0x8, 0x2, 0x4, 0x10, 0x20, 0x400, 0x40, 0x80];
+    setInterval(function () {
+      var t = (performance.now() - t0) / 1000;
+      var passo = Math.floor(t * 3);
+      chegou({
+        s: Date.now(), p: 1,
+        b: botoes[Math.floor(t * 2.5) % botoes.length],
+        lt: Math.round((Math.sin(t * 2) + 1) * 50), rt: Math.round((Math.cos(t * 1.5) + 1) * 50),
+        lx: Math.round(Math.cos(t * 2) * 100), ly: Math.round(Math.sin(t * 2) * 100),
+        rx: Math.round(Math.sin(t * 1.3) * 80), ry: Math.round(Math.cos(t * 1.7) * 80),
+        k: codigos.length ? [codigos[passo % codigos.length], codigos[(passo * 7 + 3) % codigos.length]] : [],
+        m: 1 << (passo % 5), w: 1 << (passo % 4), sh: passo % 6 === 0 ? 1 : 0, cp: 0
+      });
+    }, 33);
+  }
+
+  if (params.has('demo')) return;
+
+  if (!codigo) {
+    document.body.classList.add('info');
+    erroInfo = 'Falta o código: use o link que o Enviar Controles mostra (termina com #k=...).';
+    mostrarInfo();
+    return;
+  }
+  if (!window.crypto || !crypto.subtle) {
+    document.body.classList.add('info');
+    erroInfo = 'Este navegador não tem criptografia (WebCrypto): abra a página por https.';
+    mostrarInfo();
+    return;
+  }
+
+  var enc = new TextEncoder();
+  function sha(s) {
+    return crypto.subtle.digest('SHA-256', enc.encode(s)).then(function (b) { return new Uint8Array(b); });
+  }
+  function hex(bytes) {
+    return Array.prototype.map.call(bytes, function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+  }
+
+  Promise.all([sha('erased-input-enc:' + codigo), sha('erased-input-mac:' + codigo), sha('erased-input-topic:' + codigo)])
+    .then(function (r) {
+      return Promise.all([
+        crypto.subtle.importKey('raw', r[0], { name: 'AES-CBC' }, false, ['decrypt']),
+        crypto.subtle.importKey('raw', r[1], { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']),
+        'erased-input/' + hex(r[2]).slice(0, 32)
+      ]);
+    })
+    .then(function (k) {
+      var chaves = { enc: k[0], mac: k[1] };
+      BROKERS.forEach(function (url) {
+        conexoes.push(new Conexao(url, k[2], function (dados) { abrir(chaves, dados); }));
+      });
+    });
+
+  function abrir(chaves, dados) {
+    if (dados.length < 16 + 16 + 32) return;
+    var fim = dados.length - 32;
+    crypto.subtle.verify('HMAC', chaves.mac, dados.subarray(fim), dados.subarray(0, fim))
+      .then(function (ok) {
+        if (!ok) return null;
+        return crypto.subtle.decrypt({ name: 'AES-CBC', iv: dados.subarray(0, 16) }, chaves.enc, dados.subarray(16, fim));
+      })
+      .then(function (claro) {
+        if (claro) chegou(JSON.parse(new TextDecoder().decode(claro)));
+      })
+      .catch(function () {});
+  }
+
+  // Minimal MQTT 3.1.1 client over WebSocket: connect, subscribe, receive.
+  function Conexao(url, topico, aoReceber) {
+    var self = this;
+    var ws = null;
+    var buf = new Uint8Array(0);
+    var ping = null;
+    var espera = 1000;
+    this.url = url;
+    this.ok = false;
+
+    function str(s) {
+      var b = enc.encode(s);
+      return [b.length >> 8, b.length & 255].concat(Array.prototype.slice.call(b));
+    }
+    function pacote(tipo, corpo) {
+      var len = corpo.length;
+      var cab = [tipo];
+      do {
+        var d = len % 128;
+        len = Math.floor(len / 128);
+        if (len > 0) d |= 128;
+        cab.push(d);
+      } while (len > 0);
+      return new Uint8Array(cab.concat(corpo));
+    }
+    function ligar() {
+      try {
+        ws = new WebSocket(url, 'mqtt');
+      } catch (e) {
+        depois();
+        return;
+      }
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = function () {
+        var id = 'erased-obs-' + Math.random().toString(16).slice(2, 10);
+        ws.send(pacote(0x10, str('MQTT').concat([4, 2, 0, 60], str(id))));
+      };
+      ws.onmessage = function (e) { juntar(new Uint8Array(e.data)); };
+      ws.onclose = function () {
+        self.ok = false;
+        clearInterval(ping);
+        buf = new Uint8Array(0);
+        depois();
+      };
+      ws.onerror = function () {
+        try { ws.close(); } catch (e) {}
+      };
+    }
+    function depois() {
+      setTimeout(ligar, espera);
+      espera = Math.min(espera * 2, 15000);
+    }
+    function juntar(pedaco) {
+      var n = new Uint8Array(buf.length + pedaco.length);
+      n.set(buf);
+      n.set(pedaco, buf.length);
+      buf = n;
+      for (;;) {
+        if (buf.length < 2) return;
+        var mult = 1, len = 0, i = 1, d;
+        do {
+          if (i >= buf.length) return;
+          d = buf[i++];
+          len += (d & 127) * mult;
+          mult *= 128;
+        } while (d & 128);
+        if (buf.length < i + len) return;
+        var tipo = buf[0];
+        var corpo = buf.slice(i, i + len);
+        buf = buf.slice(i + len);
+        tratar(tipo, corpo);
+      }
+    }
+    function tratar(tipo, corpo) {
+      var t = tipo >> 4;
+      if (t === 2) {
+        if (corpo[1] !== 0) {
+          ws.close();
+          return;
+        }
+        ws.send(pacote(0x82, [0, 1].concat(str(topico), [0])));
+        espera = 1000;
+        ping = setInterval(function () {
+          if (ws.readyState === 1) ws.send(new Uint8Array([0xC0, 0]));
+        }, 30000);
+      } else if (t === 9) {
+        self.ok = true;
+      } else if (t === 3) {
+        var p = 2 + ((corpo[0] << 8) | corpo[1]);
+        if ((tipo >> 1) & 3) p += 2;
+        aoReceber(corpo.subarray(p));
+      }
+    }
+    ligar();
+  }
+})();
+</script>
+</body>
+</html>
